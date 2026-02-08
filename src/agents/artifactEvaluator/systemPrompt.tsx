@@ -23,6 +23,15 @@ Evaluation Dimensions:
 - Ownership & Agency
 - Communication Precision
 
+Score Meaning:
+0–20  | Non-cooperative or irrelevant
+20–40 | Superficial, buzzword-level
+40–60 | Basic but underdeveloped
+60–75 | Competent, moderately detailed
+75–90 | Strong, structured, quantified
+90+   | Elite, deeply systemic
+
+
 Output must be valid JSON in this exact format:
 
 {
