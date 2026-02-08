@@ -163,6 +163,10 @@ const Evaluation: React.FC<{ cognitionArtifactEvaluation: any }> = ({ cognitionA
 export const Home: React.FC<{ id: string; label: string }> = ({ id, label }) => {
   const [openaiKey, setOpenaiKey] = React.useState('');
   const [currentQuestion, setCurrentQuestion] = React.useState('');
+  const [conversations, setConversations] = React.useState<Map<string, { conversation: { role: string, content: string }[], cognitionArtifact: any, evaluation: any }>>(
+    new Map(JSON.parse(localStorage.getItem("conversations") || "{}"))
+  );
+
   const [currentConversation, setCurrentConversation] = React.useState<{ role: string, content: string }[]>([]);
   const [text, setText] = React.useState('');
 
@@ -258,6 +262,25 @@ export const Home: React.FC<{ id: string; label: string }> = ({ id, label }) => 
     }
   };
 
+  const handleStoreConversationAndArtifacts = React.useCallback(async () => {
+    const data = {
+      id: crypto.randomUUID(),
+      conversation: currentConversation,
+      cognitionArtifact: cognitionArtifact,
+      evaluation: cognitionArtifactEvaluation
+    };
+    conversations.set(data.id, data);
+    localStorage.setItem("conversations", JSON.stringify(conversations));
+  }, [conversations, currentConversation, cognitionArtifact, cognitionArtifactEvaluation]);
+
+
+  const handleLoadConversation = (key: string) => async () => {
+    handleStoreConversationAndArtifacts();
+    setCurrentConversation(conversations.get(key)!.conversation);
+    setCognitionArtifact(conversations.get(key)!.cognitionArtifact);
+    setCognitionArtifactEvaluation(conversations.get(key)!.evaluation);
+  };
+
   React.useEffect(() => {
     const savedKey = localStorage.getItem('openaiKey');
     if (savedKey) {
@@ -268,6 +291,15 @@ export const Home: React.FC<{ id: string; label: string }> = ({ id, label }) => 
   return (
     <div>
       <h1>{label}</h1>
+      <h2>Conversations </h2>
+      {conversations.size > 0 &&
+        <ul>
+          {Array.from(conversations.keys()).map((key) => (
+            <li key={key} onClick={handleLoadConversation(key)} style={{ cursor: 'pointer' }}>{conversations.get(key)!.conversation[2].content}</li>
+          ))}
+        </ul>
+      }
+      <button onClick={handleStoreConversationAndArtifacts}>Store Conversation and Artifacts</button>
       <button onClick={handleClickNewQuestion}>New Conversation Question</button>
       <p>Current Question: {currentQuestion}</p>
       <TextTranscription text={text} />
