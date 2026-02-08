@@ -27,15 +27,15 @@ Output must be valid JSON in this exact format:
 
 {
   "scores": {
-    "problem_clarity": { "score": 0-5, "justification": "" },
-    "systems_thinking": { "score": 0-5, "justification": "" },
-    "technical_depth": { "score": 0-5, "justification": "" },
-    "tradeoff_awareness": { "score": 0-5, "justification": "" },
-    "risk_analysis": { "score": 0-5, "justification": "" },
-    "execution_specificity": { "score": 0-5, "justification": "" },
-    "outcome_orientation": { "score": 0-5, "justification": "" },
-    "ownership_agency": { "score": 0-5, "justification": "" },
-    "communication_precision": { "score": 0-5, "justification": "" }
+    "problem_clarity": { "score": 0-100, "justification": "" },
+    "systems_thinking": { "score": 0-100, "justification": "" },
+    "technical_depth": { "score": 0-100, "justification": "" },
+    "tradeoff_awareness": { "score": 0-100, "justification": "" },
+    "risk_analysis": { "score": 0-100, "justification": "" },
+    "execution_specificity": { "score": 0-100, "justification": "" },
+    "outcome_orientation": { "score": 0-100, "justification": "" },
+    "ownership_agency": { "score": 0-100, "justification": "" },
+    "communication_precision": { "score": 0-100, "justification": "" }
   },
   "overall_assessment": "High-level evaluation of demonstrated engineering cognition",
   "key_strengths": ["Bullet list"],
