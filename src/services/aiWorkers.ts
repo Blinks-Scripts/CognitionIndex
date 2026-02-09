@@ -1,6 +1,7 @@
 import { systemPrompt as interviewer } from '../agents/professionalInterviewer/systemPrompt';
 import { systemPrompt as artifactor } from '../agents/cognitionArtifactor/systemPrompt';
 import { systemPrompt as evaluator } from '../agents/artifactEvaluator/systemPrompt';
+import { systemPrompt as batchEvaluator } from '../agents/artifactEvaluator/batchEvaluator';
 import { systemPrompt as extractor } from '../agents/signalExtractor/systemPrompt';
 import { systemPrompt as assessor } from '../agents/signalAssessor/systemPrompt';
 import { systemPrompt as followUpPrompt } from '../agents/professionalInterviewer/followUpPrompt';
@@ -153,6 +154,55 @@ export const artifactEvaluator = async (
 
   try {
     return JSON.parse(data.choices[0].message.content);
+  } catch (e) {
+    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
+    console.error(err);
+    return err;
+  }
+};
+
+export const batchArtifactEvaluator = async (
+  openaiKey: string,
+  artifacts: any[]
+): Promise<Error | any> => {
+  let messages: any[] = [];
+  artifacts.forEach((artifact: any) => {
+    messages.push({
+      role: 'user',
+      content: JSON.stringify(artifact),
+    });
+    messages.push({
+      role: 'assistant',
+      content: "Provide another artifact if needed.",
+    });
+  });
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openaiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o',
+      messages: [
+        {
+          role: 'system',
+          content: batchEvaluator,
+        },
+        ...messages,
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.choices?.[0]?.message?.content) {
+    throw new Error('Invalid response from API');
+  }
+
+  try {
+    const message = JSON.parse(data.choices[0].message.content.replace("```json", "").replace("```", ""));
+    console.log("message", message);
+    return message;
   } catch (e) {
     const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
     console.error(err);

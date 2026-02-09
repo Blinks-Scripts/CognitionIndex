@@ -5,7 +5,8 @@ import {
   cognitionArtifactor,
   artifactEvaluator,
   followupQuestionWorker,
-  type ChatMessage
+  type ChatMessage,
+  batchArtifactEvaluator
 } from '../services/aiWorkers';
 
 export interface ConversationData {
@@ -115,6 +116,22 @@ export const useCognition = (openaiKey: string) => {
     setIsLoading(prev => ({ ...prev, evaluation: false }));
     return response;
   }, [openaiKey, extractedSignals, signalAssessment, cognitionArtifact]);
+
+  const handleEvaluateBatchArtifacts = useCallback(async (selectedIds: string[], depth = 0) => {
+    const artifacts = selectedIds.map((id) => {
+      const conversation = conversations.get(id);
+      if (!conversation) return null;
+      return { title: conversation.title, artifact: conversation.cognitionArtifact };
+    });
+    setIsLoading(prev => ({ ...prev, evaluation: true }));
+    let response = await batchArtifactEvaluator(openaiKey, artifacts);
+    if (response instanceof Error && response.message === 'JSON_PARSE_ERROR' && depth < 3) {
+      response = await handleEvaluateBatchArtifacts(selectedIds, depth + 1);
+    }
+    setCognitionArtifactEvaluation(response);
+    setIsLoading(prev => ({ ...prev, evaluation: false }));
+    return response;
+  }, [openaiKey, conversations]);
 
   const handleGetFollowupQuestion = useCallback(async () => {
     let payloadConversation: ChatMessage[] = [];
@@ -237,6 +254,7 @@ export const useCognition = (openaiKey: string) => {
     handleAssessSignals,
     handleGenerateCognitionArtifact,
     handleEvaluateCognitionArtifact,
+    handleEvaluateBatchArtifacts,
     handleGetFollowupQuestion,
     handleStoreConversationAndArtifacts,
     handleDeleteConversation,

@@ -3,11 +3,12 @@ import type { ConversationData } from '../hooks/useCognition';
 
 interface ConversationListProps {
   conversations: Map<string, ConversationData>;
+  selectedIdsRef: React.MutableRefObject<string[]>;
   onLoad: (key: string) => void;
   onDelete: (key: string) => void;
 }
 
-export const ConversationList: React.FC<ConversationListProps> = ({ conversations, onLoad, onDelete }) => {
+export const ConversationList: React.FC<ConversationListProps> = ({ conversations, selectedIdsRef, onLoad, onDelete }) => {
   const [isSelectedIds, setIsSelectedIds] = React.useState<string[]>([]);
   const [isSelectedAll, setIsSelectedAll] = React.useState(false);
   const handleSelected = (isSelected: boolean, key: string) => {
@@ -17,6 +18,10 @@ export const ConversationList: React.FC<ConversationListProps> = ({ conversation
       setIsSelectedIds(isSelectedIds.filter((id: string) => id !== key));
     }
   };
+
+  React.useEffect(() => {
+    selectedIdsRef.current = isSelectedIds;
+  }, [isSelectedIds]);
 
   React.useEffect(() => {
     if (isSelectedAll) {
