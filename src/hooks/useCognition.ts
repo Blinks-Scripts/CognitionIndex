@@ -6,7 +6,8 @@ import {
   artifactEvaluator,
   followupQuestionWorker,
   type ChatMessage,
-  batchArtifactEvaluator
+  batchArtifactEvaluator,
+  referenceDetectionWorker
 } from '../services/aiWorkers';
 
 export interface ConversationData {
@@ -19,7 +20,8 @@ export interface ConversationData {
   evaluation: any;
 }
 
-export const useCognition = (openaiKey: string) => {
+export const useCognition = () => {
+  const [openaiKey, setOpenaiKey] = useState<string>(() => localStorage.getItem('openaiKey') || '');
   const [conversations, setConversations] = useState<Map<string, ConversationData>>(() => {
     const saved = localStorage.getItem("conversations");
     if (!saved) return new Map();
@@ -133,22 +135,8 @@ export const useCognition = (openaiKey: string) => {
     return response;
   }, [openaiKey, conversations]);
 
-  const handleGetFollowupQuestion = useCallback(async () => {
-    let payloadConversation: ChatMessage[] = [];
-    if (currentConversation.length === 0) {
-      payloadConversation = [{ role: 'assistant', content: currentQuestion }, { role: 'user', content: text }];
-    } else {
-      payloadConversation = [...currentConversation];
-    }
-
-    const response = await followupQuestionWorker(openaiKey, payloadConversation, cognitionArtifactEvaluation || "No evaluation yet");
-    setCurrentConversation(response.newConversation);
-    return response;
-  }, [openaiKey, currentQuestion, text, currentConversation, signalAssessment, cognitionArtifactEvaluation]);
-
   const handleStoreConversationAndArtifacts = useCallback(() => {
     const id = crypto.randomUUID();
-    debugger;
     const data: ConversationData = {
       id,
       title: currentConversationTitle,
@@ -233,7 +221,34 @@ export const useCognition = (openaiKey: string) => {
     setCurrentConversationTitle(title);
   };
 
+
+  const handleGetFollowupQuestion = useCallback(async () => {
+    let payloadConversation: ChatMessage[] = [];
+    if (currentConversation.length === 0) {
+      payloadConversation = [{ role: 'assistant', content: currentQuestion }, { role: 'user', content: text }];
+    } else {
+      payloadConversation = [...currentConversation];
+    }
+
+    const response = await followupQuestionWorker(openaiKey, payloadConversation, cognitionArtifactEvaluation || "No evaluation yet");
+    setCurrentConversation(response.newConversation);
+    return response;
+  }, [openaiKey, currentQuestion, text, currentConversation, signalAssessment, cognitionArtifactEvaluation]);
+
+
+  const handleGenerateReference = useCallback(async (strength: string, referenceId: string) => {
+    const response = await referenceDetectionWorker(openaiKey, strength, currentConversation);
+    if (response instanceof Error) {
+      console.error(response);
+      return { supporting_material: ['Error generating reference'] };
+    }
+    console.log(response, referenceId);
+    return { supporting_material: response.supporting_material };
+  }, [openaiKey, currentConversation]);
+
   return {
+    openaiKey,
+    setOpenaiKey,
     conversations,
     currentConversation,
     currentConversationTitle,
@@ -261,6 +276,7 @@ export const useCognition = (openaiKey: string) => {
     handleFullPipeline,
     handleLoadConversation,
     handleSetConversationTitle,
+    handleGenerateReference,
     startNewConversation
   };
 };

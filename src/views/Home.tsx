@@ -4,7 +4,7 @@ import { UserInput } from '../components/UserInput';
 import { TextTranscription } from '../components/TextTranscription';
 import { ConversationList } from '../components/ConversationList';
 import { PipelineResults } from '../components/PipelineResults';
-import { useCognition } from '../hooks/useCognition';
+import { useCognitionContext } from '../context/CognitionContext';
 import { newQuestionWorker } from '../services/aiWorkers';
 import { systemPrompt as interviewer } from '../agents/professionalInterviewer/systemPrompt';
 
@@ -97,13 +97,14 @@ const MultiArtifactEvaluation = ({ batchEvaluation, selectedIds }: { batchEvalua
 };
 
 export const Home: React.FC<{ id: string; label: string }> = ({ label }) => {
-  const [openaiKey, setOpenaiKey] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const selectedIdsRef = React.useRef<string[]>([]);
   React.useEffect(() => {
     setSelectedIds(selectedIdsRef.current);
   }, [selectedIdsRef.current]);
   const {
+    openaiKey,
+    setOpenaiKey,
     conversations,
     currentConversation,
     currentConversationTitle,
@@ -127,8 +128,11 @@ export const Home: React.FC<{ id: string; label: string }> = ({ label }) => {
     handleLoadConversation,
     handleStoreConversationAndArtifacts,
     handleSetConversationTitle,
+    handleGenerateReference,
     startNewConversation
-  } = useCognition(openaiKey);
+  } = useCognitionContext();
+
+  console.log('Home: handleGenerateReference type:', typeof handleGenerateReference);
 
   const [tempTitle, setTempTitle] = useState('');
   const [batchEvaluation, setBatchEvaluation] = useState<any>(null);
@@ -240,7 +244,7 @@ export const Home: React.FC<{ id: string; label: string }> = ({ label }) => {
           {currentConversation.length > 3 && (
             <div style={{ margin: '20px 0', borderLeft: '4px solid #eee', paddingLeft: '15px' }}>
               <h4>Followup Discussion:</h4>
-              {currentConversation.slice(3).map((item, index) => (
+              {currentConversation.slice(3).map((item: any, index: number) => (
                 <p key={index}><strong>{item.role}:</strong> {item.content}</p>
               ))}
             </div>

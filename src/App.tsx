@@ -6,6 +6,7 @@ import { Layout } from './layout'
 import { Home } from './views/Home'
 import { Profile } from './views/Profile'
 import { Settings } from './views/Settings'
+import { CognitionProvider } from './context/CognitionContext'
 
 function App() {
 
@@ -13,11 +14,13 @@ function App() {
 
   return (
     <div style={{ width: '100%', height: '100%' }}>
-      <Layout view={view} setView={setView}>
-        <Home id="home" label="Home" />
-        <Profile id="profile" label="Profile" />
-        <Settings id="settings" label="Settings" />
-      </Layout>
+      <CognitionProvider>
+        <Layout view={view} setView={setView}>
+          <Home id="home" label="Home" />
+          <Profile id="profile" label="Profile" />
+          <Settings id="settings" label="Settings" />
+        </Layout>
+      </CognitionProvider>
     </div>
   )
 }

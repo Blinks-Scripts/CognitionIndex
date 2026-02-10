@@ -5,6 +5,7 @@ import { systemPrompt as batchEvaluator } from '../agents/artifactEvaluator/batc
 import { systemPrompt as extractor } from '../agents/signalExtractor/systemPrompt';
 import { systemPrompt as assessor } from '../agents/signalAssessor/systemPrompt';
 import { systemPrompt as followUpPrompt } from '../agents/professionalInterviewer/followUpPrompt';
+import { systemPrompt as referenceDetection } from '../agents/signalExtractor/referenceRecovery';
 
 export interface ChatMessage {
   role: string;
@@ -272,6 +273,41 @@ export const signalAssessorWorker = async (openaiKey: string, conversation: any,
 
   try {
     return JSON.parse(data.choices[0].message.content);
+  } catch (e) {
+    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
+    console.error(err);
+    return err;
+  }
+};
+
+
+export const referenceDetectionWorker = async (openaiKey: string, strength: string, conversation: any[]) => {
+  debugger;
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${openaiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: referenceDetection,
+        },
+        { role: 'user', content: JSON.stringify({ strength, conversation }) },
+      ],
+    }),
+  });
+
+  const data = await response.json();
+  if (!data.choices?.[0]?.message?.content) {
+    throw new Error('Invalid response from API');
+  }
+
+  try {
+    return JSON.parse(data.choices[0].message.content) as { reference: string; supporting_material: string[] };
   } catch (e) {
     const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
     console.error(err);
