@@ -1,6 +1,8 @@
 import { Buffer } from 'buffer';
 import React from 'react';
 import { useCognitionContext } from '../context/CognitionContext';
+import { ReferenceModal } from './ReferenceModal';
+import type { EvidenceResult } from './types/EvidenceResult';
 
 interface EvaluationProps {
   cognitionArtifactEvaluation: {
@@ -30,106 +32,34 @@ const normalizeFirstLetter = (str: string, splitChar: string = '_') => {
   return str.split(splitChar).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
 }
 
-const getHighlightedSnippet = (text: string, highlight: string) => {
-  if (!highlight || !highlight.trim()) return null;
-
-  const target = highlight.trim().toLowerCase();
-  const content = text.toLowerCase();
-  const highlightWords = highlight.split(/\s+/).filter(w => w.length > 0);
-
-  let matchStr = "";
-  let startIndex = -1;
-
-  // 1. Try exact match first (if 10+ words)
-  if (highlightWords.length >= 10 && content.includes(target)) {
-    matchStr = highlight;
-    startIndex = content.indexOf(target);
-  } else {
-    // 2. Try largest contiguous substring of at least 10 words
-    let bestMatch = "";
-    let bestIndex = -1;
-
-    for (let i = 0; i < highlightWords.length; i++) {
-      for (let j = highlightWords.length; j >= i + 10; j--) {
-        const subphrase = highlightWords.slice(i, j).join(" ");
-        const idx = content.indexOf(subphrase.toLowerCase());
-        if (idx !== -1 && subphrase.length > bestMatch.length) {
-          bestMatch = subphrase;
-          bestIndex = idx;
-        }
-      }
-    }
-
-    if (bestIndex !== -1) {
-      matchStr = bestMatch;
-      startIndex = bestIndex;
-    }
-  }
-
-  if (startIndex === -1) return null;
-
-  const matchEnd = startIndex + matchStr.length;
-
-  // Split by sentence boundaries
-  const sentenceRegex = /(?<=[.!?])\s+/;
-
-  const beforeText = text.slice(0, startIndex);
-  const beforeParts = beforeText.split(sentenceRegex);
-  // Get 2 sentences before (last 2 full sentences)
-  const ctxBefore = beforeParts.length > 2 ? beforeParts.slice(-3).join(" ") : beforeText;
-
-  const afterText = text.slice(matchEnd);
-  const afterParts = afterText.split(sentenceRegex);
-  // Get 2 sentences after (first 2 full sentences)
-  const ctxAfter = afterParts.slice(0, 2).join(" ");
-
-  return (
-    <span>
-      {beforeParts.length > 3 && "... "}
-      {ctxBefore}
-      <mark style={{ backgroundColor: '#FFE082', padding: '0 2px', borderRadius: '2px', color: 'black' }}>
-        {text.slice(startIndex, matchEnd)}
-      </mark>
-      {ctxAfter}
-      {afterParts.length > 2 && " ..."}
-    </span>
-  );
-};
-
-const HighlightText: React.FC<{ text: string; highlight: string }> = ({ text, highlight }) => {
-  return getHighlightedSnippet(text, highlight);
-};
 
 export const Evaluation: React.FC<EvaluationProps> = ({ cognitionArtifactEvaluation }) => {
   const {
     handleGenerateReference,
-    currentConversation
+    currentConversation,
+    currentConversationTitle
   } = useCognitionContext();
 
-  const [modalContent, setModalContent] = React.useState<{ strength: string; supporting_material: string[] } | null>(null);
   const [modalIsOpen, setModalIsOpen] = React.useState(false);
+  const [modalTarget, setModalTarget] = React.useState('');
+  const [modalEvidence, setModalEvidence] = React.useState<EvidenceResult[]>([]);
 
   function base64Encode(strength: string): string {
     return Buffer.from(strength).toString('base64') || 'error';
   }
 
-  const handleCloseModal = () => {
-    setModalIsOpen(false);
-  }
-
-  const handleOpenModal = () => {
-    setModalIsOpen(true);
-  }
-
-  const openModalWithContent = (strength: string, supporting_material: string[]) => {
-    setModalContent({ strength, supporting_material });
-    handleOpenModal();
-  };
-
   const handleClickReference = (strength: string, referenceId: string) => async () => {
+    setModalTarget(strength);
+    setModalEvidence([]);
+    setModalIsOpen(true);
+
     const reference = await handleGenerateReference(strength, referenceId);
-    console.log(reference.supporting_material);
-    openModalWithContent(strength, reference.supporting_material);
+
+    setModalEvidence([{
+      conversationTitle: currentConversationTitle,
+      messages: currentConversation,
+      supportingQuotes: reference.supporting_material
+    }]);
   };
 
   return (
@@ -163,81 +93,12 @@ export const Evaluation: React.FC<EvaluationProps> = ({ cognitionArtifactEvaluat
       {cognitionArtifactEvaluation.recommendations_for_stronger_artifact.map((recommendation: string) => (
         <p key={recommendation}>{recommendation}</p>
       ))}
-      {modalIsOpen && (
-        <div style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: "white",
-          padding: "40px",
-          borderRadius: "12px",
-          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.2)",
-          zIndex: 1000,
-          maxWidth: '80%',
-          maxHeight: '80%',
-          overflow: 'auto',
-          color: 'black'
-        }}>
-          <h2 style={{ borderBottom: '2px solid #eee', paddingBottom: '10px' }}>Evidence for: {modalContent?.strength}</h2>
-
-          {modalContent?.supporting_material
-            .filter(material => material.split(/\s+/).filter(w => w.length > 0).length >= 10)
-            .map((material, index) => {
-              const matchingMessages = currentConversation.map((message: any, msgIndex: number) => {
-                const highlighted = getHighlightedSnippet(message.content, material);
-                if (!highlighted) return null;
-                return (
-                  <div key={msgIndex} style={{ marginBottom: '10px', padding: '10px', background: 'white', borderRadius: '4px', border: '1px solid #ddd' }}>
-                    <strong>{message.role}:</strong> {highlighted}
-                  </div>
-                );
-              }).filter(msg => msg !== null);
-
-              if (matchingMessages.length === 0) return null;
-
-              return (
-                <div key={index} style={{ marginBottom: '30px', padding: '15px', background: '#f9f9f9', borderRadius: '8px' }}>
-                  <p><strong>Supporting Evidence #{index + 1}:</strong></p>
-                  <p style={{ fontStyle: 'italic', color: '#555', borderLeft: '3px solid #007AFF', paddingLeft: '10px' }}>"{material}"</p>
-
-                  <div style={{ marginTop: '15px' }}>
-                    <p><strong>Found in Conversation:</strong></p>
-                    {matchingMessages}
-                  </div>
-                </div>
-              );
-            })}
-          <button
-            onClick={handleCloseModal}
-            style={{
-              marginTop: '20px',
-              padding: '8px 16px',
-              background: '#007AFF',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            Close
-          </button>
-        </div>
-      )}
-      {modalIsOpen && (
-        <div
-          onClick={handleCloseModal}
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0,0,0,0.5)',
-            zIndex: 999
-          }}
-        />
-      )}
+      <ReferenceModal
+        isOpen={modalIsOpen}
+        onClose={() => setModalIsOpen(false)}
+        targetName={modalTarget}
+        evidence={modalEvidence}
+      />
     </div>
   );
 };

@@ -1,4 +1,4 @@
-export const systemPrompt = `
+export const INTERVIEWER_PROMPT = `
 You are a senior engineering hiring interviewer.
 
 Your goal is to ask a question that reveal the candidate’s:

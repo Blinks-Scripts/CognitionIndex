@@ -1,0 +1,22 @@
+.session-container {
+  display: flex;
+  flex-direction: column;
+  margin-top: 40px;
+  border: 1px solid #ccc;
+  padding: 20px;
+  border-radius: 8px;
+}
+
+.session-container.collapsed {
+  display: flex;
+  flex-direction: column;
+  max-height: 100px;
+  height: 100px;
+  overflow-y: scroll;
+}
+
+.controls-container {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+}

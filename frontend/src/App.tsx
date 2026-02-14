@@ -6,6 +6,7 @@ import { Layout } from './layout'
 import { Home } from './views/Home'
 import { Profile } from './views/Profile'
 import { Settings } from './views/Settings'
+import { BatchEvaluation } from './views/BatchEvaluation'
 import { CognitionProvider } from './context/CognitionContext'
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
       <CognitionProvider>
         <Layout view={view} setView={setView}>
           <Home id="home" label="Home" />
+          <BatchEvaluation id="batch-eval" label="Batch Evaluation" />
           <Profile id="profile" label="Profile" />
           <Settings id="settings" label="Settings" />
         </Layout>

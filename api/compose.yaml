@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+    ports:
+      - "5001:5001"
+    environment:
+      - PORT=5001
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Recommended to pass OPENAI_API_KEY via environment or .env file
+    env_file:
+      - .env
+    volumes:
+      - .:/app # Optional: for development live-reloading

@@ -1,6 +1,5 @@
 import React from 'react';
 import { convertBlobToMp3 } from '../utils/audioUtils';
-import { TextTranscription } from './TextTranscription';
 import { TranscribeAudio } from './TranscribeAudio';
 import { RecordAudio } from './RecordAudio/RecordAudio';
 import { UploadAudio } from './UploadAudio';
@@ -55,14 +54,51 @@ export const UserInput: React.FC<{
     handleTranscribe();
   }, [mp3Blob, file]);
 
+  const [manualText, setManualText] = React.useState('');
+
+  const handleManualSubmit = () => {
+    if (manualText.trim()) {
+      setText(manualText);
+      setManualText('');
+    }
+  };
+
   return (
-    <div>
-      <TranscribeAudio transcribe={handleTranscribe} />
-      <RecordAudio setAudio={setAudio} show={method === 'record'} mp3Blob={mp3Blob} />
-      <UploadAudio setFile={setFile} show={method === 'upload'} />
-      <button onClick={() => setMethod(method === 'upload' ? 'record' : 'upload')}>
-        {method === 'upload' ? 'Record' : 'Upload'}
-      </button>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ border: '1px solid #ddd', padding: '15px', borderRadius: '8px' }}>
+        <h4>Manual Text Entry</h4>
+        <textarea
+          value={manualText}
+          onChange={(e) => setManualText(e.target.value)}
+          placeholder="Paste or type conversation text here..."
+          style={{ width: '100%', minHeight: '100px', padding: '8px', marginBottom: '10px' }}
+        />
+        <button onClick={handleManualSubmit} disabled={!manualText.trim()}>
+          Submit Text
+        </button>
+      </div>
+
+      <div style={{ border: '1px solid #ddd', padding: '15px', borderRadius: '8px' }}>
+        <h4>Audio Input</h4>
+        <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+          <button onClick={() => setMethod('upload')} style={{ fontWeight: method === 'upload' ? 'bold' : 'normal' }}>
+            Upload
+          </button>
+          <button onClick={() => setMethod('record')} style={{ fontWeight: method === 'record' ? 'bold' : 'normal' }}>
+            Record
+          </button>
+        </div>
+
+        {method === 'upload' ? (
+          <UploadAudio setFile={setFile} show={true} />
+        ) : (
+          <RecordAudio setAudio={setAudio} show={true} mp3Blob={mp3Blob} />
+        )}
+
+        <div style={{ marginTop: '10px' }}>
+          <TranscribeAudio transcribe={handleTranscribe} />
+        </div>
+      </div>
     </div>
   );
 };

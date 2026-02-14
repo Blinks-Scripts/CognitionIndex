@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import {
   signalExtractorWorker,
   signalAssessorWorker,
@@ -7,8 +7,12 @@ import {
   followupQuestionWorker,
   type ChatMessage,
   batchArtifactEvaluator,
-  referenceDetectionWorker
+  referenceDetectionWorker,
+  batchReferenceDetectionWorker,
+  deepDiveReferenceWorker
 } from '../services/aiWorkers';
+import { INTERVIEWER_PROMPT } from '../constants/prompts';
+import { encryptApiKey, decryptApiKey } from '../utils/cryptoUtils';
 
 export interface ConversationData {
   id: string;
@@ -20,22 +24,72 @@ export interface ConversationData {
   evaluation: any;
 }
 
+export interface ConversationVersion {
+  id: string;
+  timestamp: number;
+  data: ConversationData;
+}
+
+export interface ConversationContainer {
+  id: string;
+  title: string;
+  activeVersionId: string;
+  versions: ConversationVersion[];
+}
+
 export const useCognition = () => {
-  const [openaiKey, setOpenaiKey] = useState<string>(() => localStorage.getItem('openaiKey') || '');
-  const [conversations, setConversations] = useState<Map<string, ConversationData>>(() => {
+  const [openaiKey, _setOpenaiKey] = useState<string>(() => {
+    const encrypted = localStorage.getItem('openaiKey');
+    return encrypted ? decryptApiKey(encrypted) : '';
+  });
+
+  const setOpenaiKey = (key: string) => {
+    _setOpenaiKey(key);
+    localStorage.setItem('openaiKey', encryptApiKey(key));
+  };
+
+  const [conversations, setConversations] = useState<Map<string, ConversationContainer>>(() => {
     const saved = localStorage.getItem("conversations");
     if (!saved) return new Map();
     try {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed)) return new Map(parsed);
-      return new Map(Object.entries(parsed));
+      let map = new Map<string, any>(Array.isArray(parsed) ? parsed : Object.entries(parsed));
+
+      // Migration: Convert legacy ConversationData to ConversationContainer
+      const migratedMap = new Map<string, ConversationContainer>();
+      map.forEach((value, key) => {
+        if (value.versions) {
+          migratedMap.set(key, value as ConversationContainer);
+        } else {
+          // Legacy data
+          const legacy = value as ConversationData;
+          const versionId = crypto.randomUUID();
+          migratedMap.set(key, {
+            id: key,
+            title: legacy.title,
+            activeVersionId: versionId,
+            versions: [{
+              id: versionId,
+              timestamp: Date.now(),
+              data: legacy
+            }]
+          });
+        }
+      });
+      return migratedMap;
     } catch (e) {
       console.error("Failed to parse conversations from localStorage", e);
       return new Map();
     }
   });
 
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [currentActiveVersionId, setCurrentActiveVersionId] = useState<string | null>(null);
+  const [currentVersions, setCurrentVersions] = useState<ConversationVersion[]>([]);
+
   const [currentConversationTitle, setCurrentConversationTitle] = useState('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedIdsRef = useRef<string[]>([]);
   const [currentConversation, setCurrentConversation] = useState<ChatMessage[]>([]);
   const [text, setText] = useState('');
   const [currentQuestion, setCurrentQuestion] = useState('');
@@ -121,9 +175,13 @@ export const useCognition = () => {
 
   const handleEvaluateBatchArtifacts = useCallback(async (selectedIds: string[], depth = 0) => {
     const artifacts = selectedIds.map((id) => {
-      const conversation = conversations.get(id);
-      if (!conversation) return null;
-      return { title: conversation.title, artifact: conversation.cognitionArtifact };
+      const container = conversations.get(id);
+      if (!container) return null;
+
+      const activeVersion = container.versions.find(v => v.id === container.activeVersionId) || container.versions[0];
+      const conversation = activeVersion.data;
+
+      return { title: conversation.title, artifact: conversation.cognitionArtifact, id: container.id };
     });
     setIsLoading(prev => ({ ...prev, evaluation: true }));
     let response = await batchArtifactEvaluator(openaiKey, artifacts);
@@ -135,8 +193,22 @@ export const useCognition = () => {
     return response;
   }, [openaiKey, conversations]);
 
-  const handleStoreConversationAndArtifacts = useCallback(() => {
-    const id = crypto.randomUUID();
+  const handleSaveVersion = useCallback((action: 'overwrite' | 'new') => {
+    let id = currentConversationId;
+
+    // If new conversation (no ID), generate one and force 'new' logic in effect
+    if (!id) {
+      id = crypto.randomUUID();
+      // First save is effectively a new version on a new ID
+    }
+
+    // Detect title change fork
+    if (conversations.has(id!) && conversations.get(id!)?.title !== currentConversationTitle) {
+      // Forking to new conversation ID
+      id = crypto.randomUUID();
+      // This effectively becomes a new conversation, so action doesn't matter much, gets treated as new entry
+    }
+
     const data: ConversationData = {
       id,
       title: currentConversationTitle,
@@ -149,11 +221,127 @@ export const useCognition = () => {
 
     setConversations(prev => {
       const next = new Map(prev);
-      next.set(id, data);
+      const timestamp = Date.now();
+      const newVersionId = crypto.randomUUID();
+
+      const newVersion: ConversationVersion = {
+        id: newVersionId,
+        timestamp,
+        data
+      };
+
+      if (next.has(id!)) {
+        const existing = next.get(id!)!;
+
+        if (action === 'new') {
+          existing.versions.push(newVersion);
+          existing.activeVersionId = newVersion.id;
+        } else {
+          // Overwrite
+          const activeIdx = existing.versions.findIndex(v => v.id === existing.activeVersionId);
+          if (activeIdx !== -1) {
+            existing.versions[activeIdx] = {
+              ...existing.versions[activeIdx],
+              timestamp,
+              data
+            };
+          } else {
+            // Fallback
+            existing.versions.push(newVersion);
+            existing.activeVersionId = newVersion.id;
+          }
+        }
+        next.set(id!, existing);
+
+        // Update local state to reflect changes immediately
+        setCurrentVersions(existing.versions);
+        setCurrentActiveVersionId(existing.activeVersionId);
+
+      } else {
+        // New ID
+        const container = {
+          id: id!,
+          title: currentConversationTitle,
+          activeVersionId: newVersion.id,
+          versions: [newVersion]
+        };
+        next.set(id!, container);
+        setCurrentVersions(container.versions);
+        setCurrentActiveVersionId(container.activeVersionId);
+      }
+
       localStorage.setItem("conversations", JSON.stringify(Array.from(next.entries())));
       return next;
     });
-  }, [currentConversation, currentConversationTitle, extractedSignals, signalAssessment, cognitionArtifact, cognitionArtifactEvaluation]);
+
+    setCurrentConversationId(id);
+  }, [currentConversation, currentConversationTitle, extractedSignals, signalAssessment, cognitionArtifact, cognitionArtifactEvaluation, currentConversationId, conversations, currentActiveVersionId]);
+
+  const handleSwitchVersion = useCallback((versionId: string) => {
+    if (!currentConversationId) return;
+    const container = conversations.get(currentConversationId);
+    if (!container) return;
+
+    const version = container.versions.find(v => v.id === versionId);
+    if (!version) return;
+
+    // Update active version in container (persist selection)
+    setConversations(prev => {
+      const next = new Map(prev);
+      const c = next.get(currentConversationId!)!;
+      c.activeVersionId = versionId;
+      next.set(currentConversationId!, c);
+      localStorage.setItem("conversations", JSON.stringify(Array.from(next.entries())));
+      return next;
+    });
+
+    // Load data
+    setCurrentActiveVersionId(versionId);
+    const conversation = version.data;
+    setCurrentConversationTitle(conversation.title);
+    setCurrentQuestion(conversation.conversation[1]?.content || '');
+    setText(conversation.conversation[2]?.content || '');
+    setCurrentConversation(conversation.conversation);
+    setExtractedSignals(conversation.extractedSignals);
+    setSignalAssessment(conversation.signalAssessment);
+    setCognitionArtifact(conversation.cognitionArtifact);
+    setCognitionArtifactEvaluation(conversation.evaluation);
+  }, [conversations, currentConversationId]);
+
+  // Deprecated direct save, mostly replaced by handleSaveVersion but kept for compatibility or internal logic if needed
+  const handleStoreConversationAndArtifacts = useCallback(() => {
+    handleSaveVersion('overwrite');
+  }, [handleSaveVersion]);
+
+  const handleBulkUploadConversations = useCallback((newList: ConversationData[]) => {
+    setConversations(prev => {
+      const next = new Map(prev);
+      newList.forEach(convo => {
+        const id = convo.id || crypto.randomUUID();
+        let conversation = convo.conversation || [];
+        if (conversation.length === 0 || conversation[0].role !== 'system') {
+          conversation = [{ role: 'system', content: INTERVIEWER_PROMPT }, ...conversation];
+        }
+
+        // Wrap in container
+        const versionId = crypto.randomUUID();
+        const data = { ...convo, id, conversation };
+
+        next.set(id, {
+          id,
+          title: convo.title,
+          activeVersionId: versionId,
+          versions: [{
+            id: versionId,
+            timestamp: Date.now(),
+            data
+          }]
+        });
+      });
+      localStorage.setItem("conversations", JSON.stringify(Array.from(next.entries())));
+      return next;
+    });
+  }, []);
 
   const handleDeleteConversation = (key: string) => {
     const confirmation = confirm(`Are you sure you want to delete this conversation: ${conversations.get(key)?.title || 'Empty Title'}?`);
@@ -164,6 +352,12 @@ export const useCognition = () => {
       localStorage.setItem("conversations", JSON.stringify(Array.from(next.entries())));
       return next;
     });
+    if (currentConversationId === key) {
+      setCurrentConversationId(null);
+      setCurrentConversation([]);
+      setCurrentConversationTitle('');
+      resetETLVariables();
+    }
   };
 
   const handleFullPipeline = useCallback(async () => {
@@ -190,8 +384,17 @@ export const useCognition = () => {
   }, [currentConversation, handleExtractSignals, handleAssessSignals, handleGenerateCognitionArtifact, handleEvaluateCognitionArtifact, resetETLVariables]);
 
   const handleLoadConversation = (key: string) => {
-    const conversation = conversations.get(key);
-    if (!conversation) return;
+    const container = conversations.get(key);
+    if (!container) return;
+
+    // Find active version
+    const activeVersion = container.versions.find(v => v.id === container.activeVersionId) || container.versions[0];
+    const conversation = activeVersion.data;
+
+    setCurrentConversationId(key);
+    setCurrentActiveVersionId(activeVersion.id);
+    setCurrentVersions(container.versions);
+
     setCurrentConversationTitle(conversation.title);
     setCurrentQuestion(conversation.conversation[1]?.content || '');
     setText(conversation.conversation[2]?.content || '');
@@ -202,15 +405,20 @@ export const useCognition = () => {
     setCognitionArtifactEvaluation(conversation.evaluation);
   };
 
-  const startNewConversation = (assistantMessage: string, systemPrompt: string) => {
-    handleStoreConversationAndArtifacts();
+  const startNewConversation = (assistantMessage: string) => {
+    // If we have unsaved changes we might want to prompt, but for now just clear
+
+    // Don't auto-store on new conversation logic here, confusing UX.
+    // handleStoreConversationAndArtifacts();
+
+    setCurrentConversationId(null);
     setCurrentConversation([]);
     setCurrentQuestion('');
     setText('');
     resetETLVariables();
 
     const newConversation: ChatMessage[] = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: INTERVIEWER_PROMPT },
       { role: 'assistant', content: assistantMessage }
     ];
     setCurrentConversation(newConversation);
@@ -223,17 +431,14 @@ export const useCognition = () => {
 
 
   const handleGetFollowupQuestion = useCallback(async () => {
-    let payloadConversation: ChatMessage[] = [];
-    if (currentConversation.length === 0) {
-      payloadConversation = [{ role: 'assistant', content: currentQuestion }, { role: 'user', content: text }];
-    } else {
-      payloadConversation = [...currentConversation];
-    }
-
-    const response = await followupQuestionWorker(openaiKey, payloadConversation, cognitionArtifactEvaluation || "No evaluation yet");
+    const response = await followupQuestionWorker(
+      openaiKey,
+      currentConversation,
+      cognitionArtifactEvaluation || "No evaluation yet"
+    );
     setCurrentConversation(response.newConversation);
     return response;
-  }, [openaiKey, currentQuestion, text, currentConversation, signalAssessment, cognitionArtifactEvaluation]);
+  }, [openaiKey, currentConversation, cognitionArtifactEvaluation]);
 
 
   const handleGenerateReference = useCallback(async (strength: string, referenceId: string) => {
@@ -245,6 +450,46 @@ export const useCognition = () => {
     console.log(response, referenceId);
     return { supporting_material: response.supporting_material };
   }, [openaiKey, currentConversation]);
+
+  const handleGenerateBatchReference = useCallback(async (pattern: string, citations: string[]) => {
+    const payloadConversations = citations.map(id => {
+      const container = conversations.get(id);
+      if (!container) return null;
+
+      const activeVersion = container.versions.find(v => v.id === container.activeVersionId) || container.versions[0];
+      const conversation = activeVersion.data;
+
+      return {
+        id: id,
+        title: conversation?.title || 'Untitled',
+        conversation: conversation?.conversation || []
+      };
+    }).filter(c => c !== null);
+
+    const response = await batchReferenceDetectionWorker(openaiKey, pattern, payloadConversations);
+    if (response instanceof Error) {
+      console.error(response);
+      return { results: [] };
+    }
+    return response;
+  }, [openaiKey, conversations]);
+
+  const handleDeepDiveReference = useCallback(async (point: string, conversationId: string) => {
+    const container = conversations.get(conversationId);
+    if (!container) {
+      return { error: 'Conversation not found' };
+    }
+
+    const activeVersion = container.versions.find(v => v.id === container.activeVersionId) || container.versions[0];
+    const conversation = activeVersion.data;
+
+    const response = await deepDiveReferenceWorker(openaiKey, point, conversation.conversation);
+    if (response instanceof Error) {
+      console.error(response);
+      return { error: 'Error generating deep dive' };
+    }
+    return response;
+  }, [openaiKey, conversations]);
 
   return {
     openaiKey,
@@ -277,6 +522,16 @@ export const useCognition = () => {
     handleLoadConversation,
     handleSetConversationTitle,
     handleGenerateReference,
-    startNewConversation
+    handleGenerateBatchReference,
+    handleDeepDiveReference,
+    handleBulkUploadConversations,
+    startNewConversation,
+    selectedIds,
+    setSelectedIds,
+    selectedIdsRef,
+    currentVersions,
+    currentActiveVersionId,
+    handleSaveVersion,
+    handleSwitchVersion
   };
 };

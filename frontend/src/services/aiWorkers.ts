@@ -1,316 +1,194 @@
-import { systemPrompt as interviewer } from '../agents/professionalInterviewer/systemPrompt';
-import { systemPrompt as artifactor } from '../agents/cognitionArtifactor/systemPrompt';
-import { systemPrompt as evaluator } from '../agents/artifactEvaluator/systemPrompt';
-import { systemPrompt as batchEvaluator } from '../agents/artifactEvaluator/batchEvaluator';
-import { systemPrompt as extractor } from '../agents/signalExtractor/systemPrompt';
-import { systemPrompt as assessor } from '../agents/signalAssessor/systemPrompt';
-import { systemPrompt as followUpPrompt } from '../agents/professionalInterviewer/followUpPrompt';
-import { systemPrompt as referenceDetection } from '../agents/signalExtractor/referenceRecovery';
-
 export interface ChatMessage {
   role: string;
   content: string;
 }
 
-export const chatCompletionWorker = async (openaiKey: string, question: string, temp: number = 0.7) => {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      temperature: temp,
-      messages: [{ role: 'user', content: question }],
-    }),
-  });
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001';
+
+const handleResponse = async (response: Response) => {
   const data = await response.json();
-  return data.choices[0].message.content;
+  if (!response.ok) {
+    throw new Error(data.error || 'API request failed');
+  }
+  return data;
 };
 
-export const conversationWorker = async (openaiKey: string, conversation: ChatMessage[]) => {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+export const chatCompletionWorker = async (api_key: string, question: string) => {
+  const response = await fetch(`${API_BASE_URL}/new-question`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-3.5-turbo',
-      messages: conversation,
-    }),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key, question })
   });
-  const data = await response.json();
-  const content = data.choices[0].message.content;
-  const newConversation = [...conversation, { role: 'assistant', content }];
-  return { data, response: content, newConversation };
+  const data = await handleResponse(response);
+  return data.question;
 };
 
-export const newQuestionWorker = async (openaiKey: string) => {
-  const response = await chatCompletionWorker(openaiKey, interviewer, 1.0);
-  return response;
+export const conversationWorker = async (api_key: string, conversation: ChatMessage[]) => {
+  const response = await fetch(`${API_BASE_URL}/followup-question`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key, conversation })
+  });
+  const data = await handleResponse(response);
+  return {
+    data,
+    response: data.question,
+    newConversation: [...conversation, { role: 'assistant', content: data.question }]
+  };
+};
+
+export const newQuestionWorker = async (api_key: string) => {
+  const response = await fetch(`${API_BASE_URL}/new-question`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key })
+  });
+  const data = await handleResponse(response);
+  return data.question;
 };
 
 export const followupQuestionWorker = async (
-  openaiKey: string,
+  api_key: string,
   conversation: ChatMessage[],
   cognitionArtifactEvaluation: any
 ) => {
-  let returnConvo = [...conversation];
-  const payloadConvo = [
-    {
-      role: 'system',
-      content: followUpPrompt,
-    },
-    {
-      role: "user",
-      content: JSON.stringify(conversation)
-    },
-    {
-      role: "user",
-      content: JSON.stringify(cognitionArtifactEvaluation.overall_assessment) + "\n" + JSON.stringify(cognitionArtifactEvaluation.recommendations)
-    }
-  ];
+  const response = await fetch(`${API_BASE_URL}/followup-question`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key, conversation, evaluation: cognitionArtifactEvaluation })
+  });
+  const data = await handleResponse(response);
 
+  let returnConvo = [...conversation];
   while (returnConvo.length > 0 && returnConvo[returnConvo.length - 1].role === "assistant") {
     returnConvo.pop();
   }
+  returnConvo = [...returnConvo, { role: 'assistant', content: data.question }];
 
-  const response = await conversationWorker(openaiKey, payloadConvo);
-  returnConvo = [...returnConvo, { role: 'assistant', content: response.response }];
-  return { data: response.data, response: response.response, newConversation: returnConvo };
+  return { data, response: data.question, newConversation: returnConvo };
 };
 
 export const cognitionArtifactor = async (
-  openaiKey: string,
+  api_key: string,
   conversation: ChatMessage[],
   extractedSignals: any,
   signalAssessment: any
 ): Promise<Error | any> => {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: artifactor,
-        },
-        { role: 'user', content: JSON.stringify(conversation) },
-        { role: 'user', content: JSON.stringify(extractedSignals) },
-        { role: 'user', content: JSON.stringify(signalAssessment) },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  if (!data.choices?.[0]?.message?.content) {
-    throw new Error('Invalid response from API');
-  }
-
   try {
-    return JSON.parse(data.choices[0].message.content);
-  } catch (e) {
-    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
-    console.error(err);
-    return err;
+    const response = await fetch(`${API_BASE_URL}/generate-artifact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, conversation, extractedSignals, signalAssessment })
+    });
+    return await handleResponse(response);
+  } catch (e: any) {
+    if (e.message.includes('JSON_PARSE_ERROR')) {
+      return new Error('JSON_PARSE_ERROR');
+    }
+    return e;
   }
 };
 
 export const artifactEvaluator = async (
-  openaiKey: string,
+  api_key: string,
   extractedSignals: any,
   signalAssessment: any,
   artifact: any
 ): Promise<Error | any> => {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: evaluator,
-        },
-        { role: 'user', content: JSON.stringify(extractedSignals) },
-        { role: 'user', content: JSON.stringify(signalAssessment) },
-        { role: 'user', content: JSON.stringify(artifact) },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  if (!data.choices?.[0]?.message?.content) {
-    throw new Error('Invalid response from API');
-  }
-
   try {
-    return JSON.parse(data.choices[0].message.content);
-  } catch (e) {
-    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
-    console.error(err);
-    return err;
+    const response = await fetch(`${API_BASE_URL}/evaluate-artifact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, extractedSignals, signalAssessment, artifact })
+    });
+    return await handleResponse(response);
+  } catch (e: any) {
+    if (e.message.includes('JSON_PARSE_ERROR')) {
+      return new Error('JSON_PARSE_ERROR');
+    }
+    return e;
   }
 };
 
 export const batchArtifactEvaluator = async (
-  openaiKey: string,
+  api_key: string,
   artifacts: any[]
 ): Promise<Error | any> => {
-  let messages: any[] = [];
-  artifacts.forEach((artifact: any) => {
-    messages.push({
-      role: 'user',
-      content: JSON.stringify(artifact),
+  try {
+    const response = await fetch(`${API_BASE_URL}/evaluate-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, artifacts })
     });
-    messages.push({
-      role: 'assistant',
-      content: "Provide another artifact if needed.",
+    return await handleResponse(response);
+  } catch (e: any) {
+    if (e.message.includes('JSON_PARSE_ERROR')) {
+      return new Error('JSON_PARSE_ERROR');
+    }
+    return e;
+  }
+};
+
+export const signalExtractorWorker = async (api_key: string, conversation: any): Promise<Error | any> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/extract-signals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, conversation })
     });
-  });
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o',
-      messages: [
-        {
-          role: 'system',
-          content: batchEvaluator,
-        },
-        ...messages,
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  if (!data.choices?.[0]?.message?.content) {
-    throw new Error('Invalid response from API');
-  }
-
-  try {
-    const message = JSON.parse(data.choices[0].message.content.replace("```json", "").replace("```", ""));
-    console.log("message", message);
-    return message;
-  } catch (e) {
-    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
-    console.error(err);
-    return err;
+    return await handleResponse(response);
+  } catch (e: any) {
+    return e;
   }
 };
 
-export const signalExtractorWorker = async (openaiKey: string, conversation: any): Promise<Error | any> => {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: extractor,
-        },
-        { role: 'user', content: JSON.stringify(conversation) },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  if (!data.choices?.[0]?.message?.content) {
-    throw new Error('Invalid response from API');
-  }
-
+export const signalAssessorWorker = async (api_key: string, conversation: any, signals: any): Promise<Error | any> => {
   try {
-    debugger;
-    return JSON.parse(data.choices[0].message.content);
-  } catch (e) {
-    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
-    console.error(err);
-    return err;
+    const response = await fetch(`${API_BASE_URL}/assess-signals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, conversation, signals })
+    });
+    return await handleResponse(response);
+  } catch (e: any) {
+    return e;
   }
 };
 
-export const signalAssessorWorker = async (openaiKey: string, conversation: any, signals: any): Promise<Error | any> => {
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: assessor,
-        },
-        { role: 'user', content: JSON.stringify(signals) },
-        { role: 'user', content: JSON.stringify(conversation) },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  debugger;
-  if (!data.choices?.[0]?.message?.content) {
-    throw new Error('Invalid response from API');
-  }
-
+export const referenceDetectionWorker = async (api_key: string, strength: string, conversation: any[]) => {
   try {
-    return JSON.parse(data.choices[0].message.content);
-  } catch (e) {
-    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
-    console.error(err);
-    return err;
+    const response = await fetch(`${API_BASE_URL}/detect-reference`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, strength, conversation })
+    });
+    return await handleResponse(response);
+  } catch (e: any) {
+    return e;
+  }
+};
+export const batchReferenceDetectionWorker = async (api_key: string, pattern: string, conversations: any[]) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/detect-batch-reference`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, pattern, conversations })
+    });
+    return await handleResponse(response);
+  } catch (e: any) {
+    return e;
   }
 };
 
-
-export const referenceDetectionWorker = async (openaiKey: string, strength: string, conversation: any[]) => {
-  debugger;
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${openaiKey}`,
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: referenceDetection,
-        },
-        { role: 'user', content: JSON.stringify({ strength, conversation }) },
-      ],
-    }),
-  });
-
-  const data = await response.json();
-  if (!data.choices?.[0]?.message?.content) {
-    throw new Error('Invalid response from API');
-  }
-
+export const deepDiveReferenceWorker = async (api_key: string, point: string, conversation: any[]) => {
   try {
-    return JSON.parse(data.choices[0].message.content) as { reference: string; supporting_material: string[] };
-  } catch (e) {
-    const err = new Error('Invalid response from API: content is not valid JSON', { cause: 'JSON_PARSE_ERROR' });
-    console.error(err);
-    return err;
+    const response = await fetch(`${API_BASE_URL}/deep-dive-reference`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key, point, conversation })
+    });
+    return await handleResponse(response);
+  } catch (e: any) {
+    return e;
   }
 };

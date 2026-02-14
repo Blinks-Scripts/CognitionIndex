@@ -7,6 +7,9 @@ interface LayoutProps {
   setView: (view: string) => void;
 }
 
+import { useCognitionContext } from './context/CognitionContext';
+import { ConversationList } from './components/ConversationList';
+
 const Logo: React.FC = () => {
   return (
     <>
@@ -28,9 +31,29 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, setView }) => {
         <div className="logo-container">
           <Logo />
         </div>
-        <nav className="header-nav">
-          <a href="#" className="header-link">Docs</a>
-          <a href="#" className="header-link">Support</a>
+        <nav className="header-nav" style={{ display: 'flex', gap: '15px' }}>
+          {React.Children.map(children, (child) => {
+            if (React.isValidElement(child)) {
+              const { id, label } = child.props as any;
+              return (
+                <button
+                  key={id}
+                  className={`header-link ${view === id ? 'active' : ''}`}
+                  onClick={() => setView(id)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: view === id ? 'bold' : 'normal',
+                    color: view === id ? '#1a73e8' : '#5f6368'
+                  }}
+                >
+                  {label || id}
+                </button>
+              );
+            }
+            return null;
+          })}
         </nav>
         <div className="user-profile">
           <div className="avatar">JB</div>
@@ -39,24 +62,10 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, setView }) => {
 
       {/* Body Area: Sidebar + Content */}
       <div className="app-body">
-        <aside className="app-sidebar">
-          <nav className="sidebar-nav">
-            {React.Children.map(children, (child) => {
-              if (React.isValidElement(child)) {
-                const { id, label } = child.props as any;
-                return (
-                  <button
-                    key={id}
-                    className="sidebar-link"
-                    onClick={() => setView(id)}
-                  >
-                    {label || id}
-                  </button>
-                );
-              }
-              return null;
-            })}
-          </nav>
+        <aside className="app-sidebar" style={{ backgroundColor: '#fff' }}>
+          <div className="sidebar-content" style={{ padding: '0 20px' }}>
+            <ConversationContent setView={setView} />
+          </div>
         </aside>
 
         <main className="app-content">
@@ -74,5 +83,32 @@ export const Layout: React.FC<LayoutProps> = ({ children, view, setView }) => {
         </main>
       </div>
     </div>
+  );
+};
+
+const ConversationContent: React.FC<{ setView: (view: string) => void }> = ({ setView }) => {
+  const {
+    conversations,
+    selectedIds,
+    setSelectedIds,
+    selectedIdsRef,
+    handleLoadConversation,
+    handleDeleteConversation,
+    handleBulkUploadConversations
+  } = useCognitionContext();
+
+  return (
+    <ConversationList
+      conversations={conversations}
+      selectedIds={selectedIds}
+      onSelectedIdsChange={setSelectedIds}
+      selectedIdsRef={selectedIdsRef}
+      onLoad={(key) => {
+        handleLoadConversation(key);
+        setView('home'); // Switch back to home view when loading a conversation
+      }}
+      onDelete={handleDeleteConversation}
+      onBulkUpload={handleBulkUploadConversations}
+    />
   );
 };
